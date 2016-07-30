@@ -306,8 +306,7 @@ def _create_linter(klass, options):
             Processes the executable's output as a corrected file.
 
             :param output:
-                The output of the program. This can be either a single
-                string or a sequence of strings.
+                The output of the program as a string.
             :param filename:
                 The filename of the file currently being corrected.
             :param file:
@@ -325,19 +324,15 @@ def _create_linter(klass, options):
                 An iterator returning results containing patches for the
                 file to correct.
             """
-            if isinstance(output, str):
-                output = (output,)
-
-            for string in output:
-                for diff in Diff.from_string_arrays(
-                        file,
-                        string.splitlines(keepends=True)).split_diff(
-                            distance=diff_distance):
-                    yield Result(self,
-                                 result_message,
-                                 affected_code=diff.affected_code(filename),
-                                 diffs={filename: diff},
-                                 severity=diff_severity)
+            for diff in Diff.from_string_arrays(
+                file,
+                output.splitlines(keepends=True)).split_diff(
+                    distance=diff_distance):
+                yield Result(self,
+                             result_message,
+                             affected_code=diff.affected_code(filename),
+                             diffs={filename: diff},
+                             severity=diff_severity)
 
         def process_output_regex(
                 self, output, filename, file, output_regex,
@@ -363,8 +358,7 @@ def _create_linter(klass, options):
             Processes the executable's output using a regex.
 
             :param output:
-                The output of the program. This can be either a single
-                string or a sequence of strings.
+                The output of the program as a string.
             :param filename:
                 The filename of the file currently being corrected.
             :param file:
@@ -399,14 +393,10 @@ def _create_linter(klass, options):
             :return:
                 An iterator returning results.
             """
-            if isinstance(output, str):
-                output = (output,)
-
-            for string in output:
-                for match in re.finditer(output_regex, string):
-                    yield self._convert_output_regex_match_to_result(
-                        match, filename, severity_map=severity_map,
-                        result_message=result_message)
+            for match in re.finditer(output_regex, output):
+                yield self._convert_output_regex_match_to_result(
+                    match, filename, severity_map=severity_map,
+                    result_message=result_message)
 
         if options["output_format"] is None:
             # Check if user supplied a `process_output` override.
@@ -425,6 +415,18 @@ def _create_linter(klass, options):
                                  "specified.".format(klass.__name__,
                                                      options["output_format"]))
 
+            # This adapter-function is used to allow for built-in
+            # output-formats taking several inputs at once. Normally only a
+            # single string (either stdout or stderr) is allowed.
+            def _process_each_output(self, parsing_function,
+                                     output, filename, file, *args, **kwargs):
+                if isinstance(output, str):
+                    output = (output,)
+
+                for string in output:
+                    yield from parsing_function(self, string, filename, file,
+                                                *args, **kwargs)
+
             if options["output_format"] == "corrected":
                 process_output_args = {
                     key: options[key]
@@ -433,7 +435,8 @@ def _create_linter(klass, options):
                     if key in options}
 
                 process_output = partialmethod(
-                    process_output_corrected, **process_output_args)
+                    _process_each_output, process_output_corrected,
+                    **process_output_args)
 
             else:
                 assert options["output_format"] == "regex"
@@ -445,7 +448,8 @@ def _create_linter(klass, options):
                     if key in options}
 
                 process_output = partialmethod(
-                    process_output_regex, **process_output_args)
+                    _process_each_output, process_output_regex,
+                    **process_output_args)
 
         @classmethod
         @contextmanager
